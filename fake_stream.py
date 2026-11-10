@@ -6,10 +6,12 @@ import json
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
+import httpx
 import numpy as np
+from pydantic import BaseModel
 import transcribe_cpp
 
 
@@ -25,7 +27,9 @@ SILENCE_BYTES = SILENCE_CHUNK * FRAME_BYTES
 
 PROJECT_DIR = Path(__file__).resolve().parent
 MODEL_DIR = PROJECT_DIR / "models"
-MODEL_NAMES = ("whisper-small-F16", "Qwen3-ASR-0.6B-Q8_0")
+MODEL_NAMES = ("whisper-small-F16", "Qwen3-ASR-0.6B-Q8_0", "whisper-large-v3-turbo-Q4_K_M", "whisper-large-v3-turbo-Q8_0")
+# 兩種轉錄模型共用 SMaLL-100 的目標語言清單。
+TRANSLATION_TARGETS = ("en", "ja", "ko", "zh", "de", "fr", "es")
 logger = logging.getLogger("uvicorn.error")
 
 
@@ -35,41 +39,76 @@ from pathlib import Path
 import ctranslate2
 import sentencepiece as spm
 import time
+from crispasr import Session as cs
+from langdetect import detect, detect_langs, DetectorFactory
+
+DetectorFactory.seed = 0
 
 
-model_dir = Path("models/small100-ctranslate2-int8")
+# model_dir = Path("models/small100-ctranslate2-int8")
+#
+# translator = ctranslate2.Translator(
+#     str(model_dir),
+#     device="cpu",
+#     compute_type="int8_float32",
+#     inter_threads=1,
+#     intra_threads=4,
+# )
+# tokenizer = spm.SentencePieceProcessor(
+#     model_file=str(model_dir / "sentencepiece.bpe.model")
+# )
+TRANSLATE_MODEL = None
+with cs(
+    model_path="models\\madlad400-3b-mt-q4_k.gguf",
+    backend="madlad",
+    n_threads=4,
+) as model:
+    TRANSLATE_MODEL = model
 
-translator = ctranslate2.Translator(
-    str(model_dir),
-    device="cpu",
-    compute_type="int8_float32",
-    inter_threads=1,
-    intra_threads=4,
-)
-tokenizer = spm.SentencePieceProcessor(
-    model_file=str(model_dir / "sentencepiece.bpe.model")
-)
 
 
-def translate(text:str, target_language:str):
+def translate(text: str, target_language: str) -> str:
     # text = "Could you tell me where the station is?"
     # text = "阿里巴巴"
     # target_language = "en"
 
-    start = time.time()
-    # SMaLL-100 places the target-language token at the beginning of the source.
-    source_tokens = (
-            [f"__{target_language}__"]
-            + tokenizer.encode(text, out_type=str)
-            + ["</s>"]
-    )
+    # start = time.time()
+    # # SMaLL-100 places the target-language token at the beginning of the source.
+    # source_tokens = (
+    #         [f"__{target_language}__"]
+    #         + tokenizer.encode(text, out_type=str)
+    #         + ["</s>"]
+    # )
+    #
+    # result = translator.translate_batch(
+    #     [source_tokens],
+    #     beam_size=5,
+    #     max_decoding_length=256,
+    #     length_penalty=1.2,
+    #     coverage_penalty=0.1,
+    #     return_end_token=True,
+    # )
+    # translation = tokenizer.decode(result[0].hypotheses[0])
+    # print(translation)
+    # print(time.time() - start)
+    # return translation
 
-    result = translator.translate_batch(
-        [source_tokens],
-        beam_size=5,
-        max_decoding_length=256,
+    start = time.time()
+    texts = "And um, and NVIDIA's market cap was eight billion dollars when Stripe launched in twenty eleven."
+    language = detect(texts)
+    confidence = detect_langs(texts)
+
+    print(texts)
+    print(f"Language: {language}")
+    print(f"Scores: {confidence}")
+    # print(f"Backend: {model.backend}")
+
+    translation = TRANSLATE_MODEL.translate_text(
+        # text="学英语，很多人叫我做翻译，我没时间。我可以把它介绍给我的老师和同事去做。而当时的想法，我觉得应该会挣钱。",
+        text=text,
+        src_lang=language,
+        tgt_lang=target_language,
     )
-    translation = tokenizer.decode(result[0].hypotheses[0])
     print(translation)
     print(time.time() - start)
     return translation
@@ -122,12 +161,10 @@ class ModelState:
         await run_in_threadpool(previous.close)
 
     def settings(self) -> dict:
-        """讓前端依目前模型的能力顯示可用的翻譯語言。"""
-        capabilities = self.model.capabilities
+        """提供目前的轉錄模型名稱和共用翻譯模型的目標語言。"""
         return {
             "model": self.name,
-            "targets": capabilities.translate_target_languages
-            if capabilities.supports_translate else (),
+            "targets": TRANSLATION_TARGETS,
         }
 
 
@@ -143,7 +180,11 @@ async def lifespan(app: FastAPI):
         )
         app.state.vad_model = vad_model
         try:
-            yield
+            # 轉錄後可用 HTTP 請求呼叫同一個 FastAPI 的翻譯路由。
+            transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+            async with httpx.AsyncClient(transport=transport, base_url="http://speechtrack") as client:
+                app.state.translation_client = client
+                yield
         finally:
             await run_in_threadpool(vad_model.close)
     finally:
@@ -154,25 +195,57 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="SpeechTrack 即時轉錄 Demo", lifespan=lifespan)
 
 
-def recognize(session: transcribe_cpp.Session, pcm: bytes, target: str) -> dict:
-    """將 PCM16LE 轉為模型需要的 float32，保留原文與選用的譯文。"""
+class TranslationRequest(BaseModel):
+    """翻譯端點接收轉錄原文和目標語言代碼。"""
+
+    text: str
+    target: str
+
+
+@app.post("/test/translate")
+async def translate_text(request: TranslationRequest) -> dict[str, str]:
+    """以共用的 SMaLL-100 模型翻譯文字。"""
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="請提供要翻譯的文字。")
+    if request.target not in TRANSLATION_TARGETS:
+        raise HTTPException(status_code=422, detail="不支援這個翻譯語言。")
+    translation = await run_in_threadpool(translate, text, request.target)
+    return {"translation": translation.strip()}
+
+
+def recognize(session: transcribe_cpp.Session, pcm: bytes) -> str:
+    """將 PCM16LE 轉為 float32，並取得轉錄原文。"""
     print("PCM DATA length: ", len(pcm))
     samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
-    result = {"text": "", "translation": ""}
     if not samples.any():
-        return result  # 略過全零音訊，避免對靜音產生文字。
-    result["text"] = session.run(samples).text.strip()
-    if target:
-        result["translation"] = translate(
-            text=result["text"], target_language=target
-        ).text.strip()
-    return result
+        return ""  # 略過全零音訊，避免對靜音產生文字。
+    return session.run(samples).text.strip()
+
+
+async def send_translation(
+    websocket: WebSocket, segment_id: int, revision: int, text: str, target: str
+) -> None:
+    """呼叫翻譯 API，並把結果送回原文對應的清單列。"""
+    client: httpx.AsyncClient = websocket.app.state.translation_client
+    message = {
+        "type": "translation", "segment_id": segment_id, "revision": revision, "target": target,
+    }
+    try:
+        response = await client.post("/test/translate", json={"text": text, "target": target})
+        response.raise_for_status()
+        message["translation"] = response.json()["translation"]
+    except (httpx.HTTPError, ValueError, KeyError):
+        # 翻譯失敗時，讓前端保留原文並顯示這一列的錯誤。
+        logger.exception("翻譯 API 呼叫失敗")
+        message["error"] = "翻譯失敗。"
+    await websocket.send_json(message)
 
 
 async def send_transcripts(
     websocket: WebSocket,
     model: transcribe_cpp.Model,
-    frames: asyncio.Queue[bytes | None],
+    frames: asyncio.Queue[bytes | str | None],
     target: str,
 ) -> None:
     """收集目前的音訊段落，反覆辨識以更新暫定文字。"""
@@ -180,16 +253,19 @@ async def send_transcripts(
     last_size = 0
     vad_model = websocket.app.state.vad_model
     silence_chunk = 0
-    last_transcription_str = ""
+    # 同一段原文更新或切換語言時提升版本，讓譯文能對應到正確的清單列。
+    last_text = ""
+    segment_id = 1
+    revision = 0
     with model.session() as session, vad_model.vad_session(n_threads=1) as vad:
         while True:
             frame = await frames.get()
 
-            if frame is not None:
+            if isinstance(frame, bytes):
                 print("PER FRAME SIZE: ", len(frame))
             # 推論期間仍能接收音訊。一次取出已排隊的封包，略過過時的暫定結果。
 
-            while frame:
+            while isinstance(frame, bytes) and frame:
                 # ================ VAD ==========================
                 chunk = np.frombuffer(frame, dtype=np.int16).astype(np.float32) / 32768.0
                 result = await run_in_threadpool(vad.stream_feed, chunk)
@@ -212,29 +288,40 @@ async def send_transcripts(
 
             if frame == b"":
                 return  # 用戶端已斷線，捨棄剩餘音訊。
+            # 語言指令和音訊共用佇列，依 WebSocket 的接收順序處理。
+            target_changed = isinstance(frame, str) and frame != target
+            if isinstance(frame, str):
+                target = frame
             stopping = frame is None
             # final = stopping or len(pcm) == SEGMENT_BYTES
             final = stopping or silence_chunk >= SILENCE_CHUNK #or len(pcm) >= SEGMENT_BYTES
-            if pcm and (final or len(pcm) - last_size >= UPDATE_BYTES):
-                # if len(pcm) != last_size and len(pcm) - last_size >= UPDATE_BYTES:
+            new_audio_bytes = len(pcm) - last_size
+            refresh_translation = target_changed and bool(last_text)
+            if pcm and (final or new_audio_bytes >= UPDATE_BYTES or refresh_translation):
                 print("[DBG] last_size: ", last_size)
+                if new_audio_bytes > 0 and (
+                    new_audio_bytes >= UPDATE_BYTES or (final and len(pcm) > SILENCE_BYTES)
+                ):
+                    last_text = await run_in_threadpool(recognize, session, bytes(pcm))
+                    last_size = len(pcm)
 
+                # 先讓前端顯示原文，翻譯 API 回應後再送出譯文。
+                revision += 1
+                print("[DBG] result[text]: ", last_text)
+                await websocket.send_json({
+                    "type": "transcript", "final": final, "text": last_text, "target": target,
+                    "segment_id": segment_id, "revision": revision,
+                })
+                if last_text and target:
+                    await send_translation(websocket, segment_id, revision, last_text, target)
 
-                if (len(pcm) != last_size and len(pcm) - last_size >= UPDATE_BYTES) or (final and len(pcm) > SILENCE_BYTES):
-                    result = await run_in_threadpool(recognize, session, bytes(pcm), target)
-                else:
-                    result = {"text": last_transcription_str, "translation": ""}
-
-                print("[DBG] result[text]: ", result["text"])
-                await websocket.send_json({"type": "transcript", "final": final, **result})
-
-                last_transcription_str = result['text']
-                last_size = len(pcm)
                 if final:
                     pcm.clear()
                     last_size = 0
                     silence_chunk = 0
-                    last_transcription_str = ""
+                    last_text = ""
+                    segment_id += 1
+                    revision = 0
                 print("=============")
             if stopping:
                 return
@@ -246,9 +333,10 @@ async def audio_transcribe(websocket: WebSocket):
     await websocket.accept()
     state: ModelState = websocket.app.state.asr
     state_vad: ModelState = websocket.app.state.vad_model
-    # 保留一個佇列位置供停止訊號使用。其餘位置最多存約 65 秒的待辨識音訊。
-    frames: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=2049)
+    # 佇列可放 PCM、語言代碼或停止訊號，保留一個位置給停止訊號。
+    frames: asyncio.Queue[bytes | str | None] = asyncio.Queue(maxsize=2049)
     worker: asyncio.Task | None = None
+    recording_target = ""
     try:
         # 讓獨立的前端檔案直接取得後端使用的 PCM 規格與模型清單。
         await websocket.send_json({
@@ -288,6 +376,20 @@ async def audio_transcribe(websocket: WebSocket):
                 if not isinstance(control, dict):
                     raise ValueError("控制訊息必須是 JSON 物件。")
                 action = control.get("type")
+                # 錄音開始和錄音中的切換使用同一份語言清單。
+                if action in ("start", "set_target"):
+                    target = control.get("target", "")
+                    if target != "" and target not in TRANSLATION_TARGETS:
+                        raise ValueError("不支援這個翻譯語言。")
+
+                if action == "set_target":
+                    if worker is None:
+                        raise ValueError("請先開始錄音。")
+                    if frames.qsize() == frames.maxsize - 1:
+                        raise ValueError("待處理音訊過多，請稍後再切換語言。")
+                    frames.put_nowait(target)
+                    recording_target = target
+                    continue
 
                 if action == "stop" and worker is not None:
                     frames.put_nowait(None)
@@ -311,13 +413,11 @@ async def audio_transcribe(websocket: WebSocket):
                             raise ValueError("模型載入失敗。") from None
                         reply = {"type": "model", **state.settings()}
                     elif action == "start":
-                        target = control.get("target", "")
                         if state.recording:
                             raise ValueError("目前已有錄音正在進行。")
                         if control.get("model") != state.name:
                             raise ValueError("模型已切換，請確認選單後再開始。")
-                        if target != "" and target not in state.settings()["targets"]:
-                            raise ValueError("目前模型不支援這個翻譯語言。")
+                        recording_target = target
                         state.recording = True
                         worker = asyncio.create_task(
                             send_transcripts(websocket, state.model, frames, target)
@@ -327,9 +427,10 @@ async def audio_transcribe(websocket: WebSocket):
                         raise ValueError("目前無法執行這個指令。")
                 await websocket.send_json(reply)
             except ValueError as error:
-                await websocket.send_json({
-                    "type": "error", "message": str(error), **state.settings(),
-                })
+                reply = {"type": "error", "message": str(error), **state.settings()}
+                if worker is not None:
+                    reply["target"] = recording_target
+                await websocket.send_json(reply)
     except WebSocketDisconnect:
         pass
     except transcribe_cpp.TranscribeError:

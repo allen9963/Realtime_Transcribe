@@ -18,24 +18,20 @@
     <section>
       <button id="record" disabled>開始錄音</button>
       <p id="status" role="status">正在連線…</p>
-      <h2>轉錄文字</h2>
-      <!-- 定稿與暫定結果各有一個顯示框，開啟翻譯時在對應框內顯示譯文。 -->
-      <div class="transcript-box" role="region" aria-labelledby="final-heading">
-        <h3 id="final-heading">Final（定稿）</h3>
-        <div id="final-text" class="transcript-text"></div>
-        <div class="translation-output" hidden>
-          <h4>翻譯文字</h4>
-          <div id="final-translation" class="transcript-text"></div>
-        </div>
+      <h2 id="transcript-heading">轉錄文字</h2>
+      <!-- 每列保留同一段的原文和譯文，清單尾端可有一筆暫定結果。 -->
+      <div id="transcript-feed" class="transcript-feed" role="region"
+           aria-labelledby="transcript-heading" tabindex="0">
+        <p id="transcript-empty">開始錄音後，轉錄結果會顯示在這裡。</p>
+        <ol id="transcript-list" role="list"></ol>
       </div>
-      <div class="transcript-box" role="region" aria-labelledby="partial-heading">
-        <h3 id="partial-heading">Partial（暫定）</h3>
-        <div id="partial-text" class="transcript-text"></div>
-        <div class="translation-output" hidden>
-          <h4>翻譯文字</h4>
-          <div id="partial-translation" class="transcript-text"></div>
-        </div>
-      </div>
+      <template id="transcript-row">
+        <li class="transcript-row">
+          <span class="transcript-draft">Partial（暫定）</span>
+          <p class="transcript-text"></p>
+          <p class="transcript-translation" hidden></p>
+        </li>
+      </template>
     </section>
     <section>
       <h2><label for="target">翻譯語言</label></h2>

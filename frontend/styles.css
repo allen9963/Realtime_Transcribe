@@ -13,11 +13,16 @@ button { display: block; margin: auto; padding: 10px 22px; border: 0;
          border-radius: 8px; background: #1553a6; color: white; cursor: pointer; }
 button:disabled { opacity: .6; cursor: default; }
 #status { text-align: center; min-height: 24px; color: #475569; }
-/* 定稿與暫定文字各自成框，並保留轉錄段落的換行。 */
-.transcript-box { min-height: 84px; background: #f4f7fb; padding: 12px;
-                  border: 1px solid #d9e1ea; border-radius: 8px; }
-.transcript-box + .transcript-box { margin-top: 12px; }
-.transcript-box h3 { margin: 0 0 8px; font-size: 16px; }
-.transcript-box h4 { margin: 12px 0 4px; font-size: 14px; color: #475569; }
-.transcript-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* 清單以細線分隔，原文與譯文在同一列內上下排列。 */
+.transcript-feed { min-height: 140px; max-height: 55vh; overflow-y: auto;
+                   border: 1px solid #d9e1ea; border-radius: 8px; }
+#transcript-empty { margin: 0; padding: 16px; color: #475569; }
+#transcript-list { margin: 0; padding: 0; list-style: none; }
+.transcript-row { padding: 12px 16px; line-height: 1.5; }
+.transcript-row + .transcript-row { border-top: 1px solid #d9e1ea; }
+.transcript-row.is-partial { background: #f0f6ff; }
+.transcript-draft { font-size: .8rem; color: #1553a6; }
+.transcript-text, .transcript-translation { margin: 0; white-space: pre-wrap;
+                                            overflow-wrap: anywhere; }
+.transcript-translation { margin-top: 4px; font-size: .9rem; color: #475569; }
 @media (max-width: 790px) { main { grid-template-columns: 1fr; } }

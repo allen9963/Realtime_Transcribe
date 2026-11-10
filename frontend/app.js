@@ -2,13 +2,22 @@ const model = document.querySelector("#model");
 const target = document.querySelector("#target");
 const record = document.querySelector("#record");
 const statusLabel = document.querySelector("#status");
-// 定稿與暫定各自顯示原文和選用的譯文。
-const finalTextOutput = document.querySelector("#final-text");
-const partialTextOutput = document.querySelector("#partial-text");
-const finalTranslationOutput = document.querySelector("#final-translation");
-const partialTranslationOutput = document.querySelector("#partial-translation");
-const translationOutputs = document.querySelectorAll(".translation-output");
+// 清單每列包含原文和譯文，暫定列可以就地更新。
+const transcriptFeed = document.querySelector("#transcript-feed");
+const transcriptList = document.querySelector("#transcript-list");
+const transcriptEmpty = document.querySelector("#transcript-empty");
+const transcriptTemplate = document.querySelector("#transcript-row");
 const translationHint = document.querySelector("#translation-hint");
+// 以中文顯示後端回傳的語言，選單的值仍使用語言代碼。
+const translationLabels = {
+  en: "英文",
+  ja: "日文",
+  ko: "韓文",
+  zh: "中文",
+  de: "德文",
+  fr: "法文",
+  es: "西班牙文",
+};
 
 const socketUrl = new URL("/test/audio_transcribe", location.href);
 socketUrl.protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -17,17 +26,17 @@ const socket = new WebSocket(socketUrl);
 let config;
 let phase = "connecting";
 let capture = null;
-let finalText = [];
-let finalTranslation = [];
+// 依段落編號保存清單列及其最新版本，讓後收到的譯文找到原文。
+const transcriptRows = new Map();
 
-// 模型載入和錄音期間鎖定設定，等伺服器確認後再開放操作。
+// 模型僅能在待機時切換，翻譯語言在錄音時也可調整。
 function setPhase(next, message) {
   phase = next;
   statusLabel.textContent = message;
   record.disabled = next !== "ready" && next !== "recording";
   record.textContent = next === "recording" ? "停止錄音" : "開始錄音";
   model.disabled = next !== "ready";
-  target.disabled = next !== "ready" || target.options.length === 1;
+  target.disabled = (next !== "ready" && next !== "recording") || target.options.length === 1;
 }
 
 function applySettings(message) {
@@ -35,10 +44,12 @@ function applySettings(message) {
   model.value = message.model;
   target.replaceChildren(new Option("不翻譯", ""));
   for (const language of message.targets) {
-    target.add(new Option(language === "en" ? "英文" : language, language));
+    target.add(new Option(translationLabels[language] ?? language, language));
   }
   target.value = message.targets.includes(previousTarget) ? previousTarget : "";
-  translationHint.textContent = message.targets.length ? "" : "目前模型僅支援轉錄。";
+  translationHint.textContent = message.targets.length
+    ? "錄音中也能切換語言，已定稿的譯文會保留。"
+    : "目前沒有可用的翻譯語言。";
 }
 
 function send(type, settings = {}) {
@@ -119,17 +130,47 @@ async function startRecording() {
   }
 }
 
-// 暫定框只保留最新結果。收到定稿時累加到定稿框並清空暫定框。
+// 暫定與定稿共用同一列。原文更新時保留同語言的上一版譯文。
 function showTranscript(message) {
-  console.log("transcript message: ", message)
-  if (message.final) {
-    if (message.text) finalText.push(message.text);
-    if (message.translation) finalTranslation.push(message.translation);
-    finalTextOutput.textContent = finalText.join("\n");
-    finalTranslationOutput.textContent = finalTranslation.join("\n");
+  const entry = transcriptRows.get(message.segment_id);
+  if (entry && message.revision <= entry.revision) return;
+  if (!message.text) {
+    entry?.row.remove();
+    transcriptRows.delete(message.segment_id);
+    transcriptEmpty.hidden = transcriptList.childElementCount > 0;
+    return;
   }
-  partialTextOutput.textContent = message.final ? "" : message.text;
-  partialTranslationOutput.textContent = message.final ? "" : message.translation;
+
+  const row = entry?.row ?? transcriptTemplate.content.firstElementChild.cloneNode(true);
+  row.classList.toggle("is-partial", !message.final);
+  row.querySelector(".transcript-draft").hidden = message.final;
+  row.querySelector(".transcript-text").textContent = message.text;
+
+  // 切換語言或關閉翻譯時，才清除這一列原有的譯文。
+  if (entry && entry.target !== message.target) {
+    const translation = row.querySelector(".transcript-translation");
+    translation.hidden = true;
+    translation.textContent = "";
+  }
+  if (!entry) transcriptList.append(row);
+  transcriptRows.set(message.segment_id, {
+    row, revision: message.revision, final: message.final, target: message.target,
+  });
+  transcriptEmpty.hidden = true;
+}
+
+// 忽略舊版本的譯文，以及切換語言後才收到的舊語言暫定譯文。
+function showTranslation(message) {
+  const entry = transcriptRows.get(message.segment_id);
+  if (!entry || entry.revision !== message.revision || entry.target !== message.target) return;
+  if (!entry.final && message.target !== target.value) return;
+
+  const output = entry.row.querySelector(".transcript-translation");
+  // 空結果或翻譯失敗時，優先保留已顯示的譯文。
+  const text = message.translation || (output.hidden ? message.error : "");
+  if (!text) return;
+  output.textContent = text;
+  output.hidden = false;
 }
 
 socket.addEventListener("message", ({data}) => {
@@ -145,28 +186,31 @@ socket.addEventListener("message", ({data}) => {
       setPhase("ready", "可以開始錄音");
       break;
     case "started":
-      // 每次開始錄音時，同時清除兩個顯示框的舊結果。
-      finalText = [];
-      finalTranslation = [];
-      finalTextOutput.textContent = "";
-      partialTextOutput.textContent = "";
-      finalTranslationOutput.textContent = "";
-      partialTranslationOutput.textContent = "";
-      for (const output of translationOutputs) {
-        output.hidden = !target.value;
-      }
+      // 開始新錄音時清空上一場的清單。
+      transcriptList.replaceChildren();
+      transcriptEmpty.hidden = false;
+      transcriptRows.clear();
       capture.source.connect(capture.node);
       capture.node.connect(capture.context.destination);
       setPhase("recording", "錄音中");
       break;
     case "transcript":
-      showTranscript(message);
+    case "translation": {
+      // 原文或譯文更新後，只有原本停在底部時才跟隨最新結果。
+      const follow = transcriptFeed.scrollHeight - transcriptFeed.scrollTop
+        - transcriptFeed.clientHeight < 32;
+      if (message.type === "transcript") showTranscript(message);
+      else showTranslation(message);
+      if (follow) transcriptFeed.scrollTop = transcriptFeed.scrollHeight;
       break;
+    }
     case "stopped":
       setPhase("ready", "錄音已停止");
       break;
     case "error":
       if (message.model) applySettings(message);
+      // 後端拒絕切換時，顯示仍在使用的語言。
+      if (message.target !== undefined) target.value = message.target;
       if (phase === "preparing") releaseCapture();
       if (phase === "recording" || phase === "stopping") statusLabel.textContent = message.message;
       else setPhase("ready", message.message);
@@ -180,6 +224,12 @@ socket.addEventListener("close", () => {
 model.addEventListener("change", () => {
   setPhase("selecting", "正在載入模型…");
   send("select_model", {model: model.value});
+});
+// 待機時的選擇會隨 start 傳送，錄音中的變更透過同一條 WebSocket 即時送出。
+target.addEventListener("change", () => {
+  if (phase === "recording" && socket.readyState === WebSocket.OPEN) {
+    send("set_target", {target: target.value});
+  }
 });
 record.addEventListener("click", () => {
   if (phase === "recording") stopRecording();
