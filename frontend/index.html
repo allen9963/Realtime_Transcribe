@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SpeechTrack 即時轉錄</title>
+  <!-- 瀏覽器分別載入網頁樣式和操作程式。 -->
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <h1>SpeechTrack 即時轉錄</h1>
+  <main>
+    <section>
+      <h2><label for="model">轉錄模型</label></h2>
+      <select id="model" disabled></select>
+    </section>
+    <section>
+      <button id="record" disabled>開始錄音</button>
+      <p id="status" role="status">正在連線…</p>
+      <h2>轉錄文字</h2>
+      <!-- 定稿與暫定結果各有一個顯示框，開啟翻譯時在對應框內顯示譯文。 -->
+      <div class="transcript-box" role="region" aria-labelledby="final-heading">
+        <h3 id="final-heading">Final（定稿）</h3>
+        <div id="final-text" class="transcript-text"></div>
+        <div class="translation-output" hidden>
+          <h4>翻譯文字</h4>
+          <div id="final-translation" class="transcript-text"></div>
+        </div>
+      </div>
+      <div class="transcript-box" role="region" aria-labelledby="partial-heading">
+        <h3 id="partial-heading">Partial（暫定）</h3>
+        <div id="partial-text" class="transcript-text"></div>
+        <div class="translation-output" hidden>
+          <h4>翻譯文字</h4>
+          <div id="partial-translation" class="transcript-text"></div>
+        </div>
+      </div>
+    </section>
+    <section>
+      <h2><label for="target">翻譯語言</label></h2>
+      <select id="target" disabled><option value="">不翻譯</option></select>
+      <p id="translation-hint"></p>
+    </section>
+  </main>
+</body>
+</html>

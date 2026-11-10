@@ -1,0 +1,23 @@
+/* 寬螢幕採三欄排列，窄螢幕改為單欄。 */
+* { box-sizing: border-box; }
+body { margin: 0 auto; max-width: 1220px; padding: 36px 20px;
+       font: 16px system-ui, sans-serif; color: #182234; background: #f3f6fa; }
+h1 { text-align: center; }
+main { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(0, 2fr)
+       minmax(180px, 1fr); gap: 16px; align-items: start; }
+section { padding: 20px; background: white; border: 1px solid #d9e1ea; border-radius: 12px; }
+h2 { font-size: 18px; margin-top: 0; }
+select, button { font: inherit; padding: 8px; }
+select { width: 100%; }
+button { display: block; margin: auto; padding: 10px 22px; border: 0;
+         border-radius: 8px; background: #1553a6; color: white; cursor: pointer; }
+button:disabled { opacity: .6; cursor: default; }
+#status { text-align: center; min-height: 24px; color: #475569; }
+/* 定稿與暫定文字各自成框，並保留轉錄段落的換行。 */
+.transcript-box { min-height: 84px; background: #f4f7fb; padding: 12px;
+                  border: 1px solid #d9e1ea; border-radius: 8px; }
+.transcript-box + .transcript-box { margin-top: 12px; }
+.transcript-box h3 { margin: 0 0 8px; font-size: 16px; }
+.transcript-box h4 { margin: 12px 0 4px; font-size: 14px; color: #475569; }
+.transcript-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 790px) { main { grid-template-columns: 1fr; } }
