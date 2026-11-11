@@ -1,18 +1,19 @@
 """執行 python fake_stream.py，然後開啟 http://127.0.0.1:8000。"""
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 import json
 import logging
+import multiprocessing
 from pathlib import Path
+import signal
+from threading import Lock
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 import httpx
-import numpy as np
 from pydantic import BaseModel
-import transcribe_cpp
 
 
 # WebSocket 每則二進位訊息固定為 32 ms 的 16 kHz 單聲道 PCM16LE。
@@ -22,130 +23,197 @@ FRAME_BYTES = FRAME_SAMPLES * 2                                          # 1024
 UPDATE_BYTES = FRAME_BYTES * 32  # 累積約 1 秒音訊後更新暫定文字。            # 32768
 SEGMENT_BYTES = FRAME_BYTES * 320  # 每約 8 秒定稿，限制重複辨識的音訊長度。   # 327680
 
-SILENCE_CHUNK = 14 # 32ms * 14
+SILENCE_CHUNK = 13 # 32ms * 14
 SILENCE_BYTES = SILENCE_CHUNK * FRAME_BYTES
 
 PROJECT_DIR = Path(__file__).resolve().parent
 MODEL_DIR = PROJECT_DIR / "models"
 MODEL_NAMES = ("whisper-small-F16", "Qwen3-ASR-0.6B-Q8_0", "whisper-large-v3-turbo-Q4_K_M", "whisper-large-v3-turbo-Q8_0")
-# 兩種轉錄模型共用 SMaLL-100 的目標語言清單。
+# 所有轉錄模型共用 MADLAD 的目標語言清單。
 TRANSLATION_TARGETS = ("en", "ja", "ko", "zh", "de", "fr", "es")
 logger = logging.getLogger("uvicorn.error")
 
 
-# =============== Translate ==================
-from pathlib import Path
-
-import ctranslate2
-import sentencepiece as spm
-import time
-from crispasr import Session as cs
-from langdetect import detect, detect_langs, DetectorFactory
-
-DetectorFactory.seed = 0
+class ModelWorkerError(RuntimeError):
+    """模型子程序載入、推論或通訊失敗。"""
 
 
-# model_dir = Path("models/small100-ctranslate2-int8")
-#
-# translator = ctranslate2.Translator(
-#     str(model_dir),
-#     device="cpu",
-#     compute_type="int8_float32",
-#     inter_threads=1,
-#     intra_threads=4,
-# )
-# tokenizer = spm.SentencePieceProcessor(
-#     model_file=str(model_dir / "sentencepiece.bpe.model")
-# )
-TRANSLATE_MODEL = None
-with cs(
-    model_path="models\\madlad400-3b-mt-q4_k.gguf",
-    backend="madlad",
-    n_threads=4,
-) as model:
-    TRANSLATE_MODEL = model
+def run_model_process(connection, open_model, model_args):
+    """子程序內載入模型，透過 Pipe 收送指令和可序列化的結果。"""
+    # Ctrl+C 由主程序處理，子程序等待 Pipe 關閉再釋放模型。
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        with connection, ExitStack() as resources: # 建立一個 ExitStack
+            try:
+                commands = resources.enter_context(open_model(*model_args)) # 動態地將所有檔案加入 stack 管理，因為ASR需要load兩個model
+            except Exception as error:
+                connection.send((False, f"{type(error).__name__}: {error}"))
+                return
+
+            # 模型載入完成後才通知主程序。原生例外只傳文字，避免主程序反序列化時載入 DLL。
+            connection.send((True, None))
+            while True:
+                command, args = connection.recv() # 接收ASR或是Translate動作以及需要的參數
+                print("[DBF] command: ", command)
+                try:
+                    result = commands[command](*args)
+                except Exception as error:
+                    connection.send((False, f"{type(error).__name__}: {error}"))
+                else:
+                    connection.send((True, result))
+    except (EOFError, OSError):
+        # 主程序關閉 Pipe 時，離開 context manager 並釋放原生模型。
+        pass
 
 
+class ModelProcess:
+    """使用 spawn 啟動單一模型子程序，並串行處理該程序的指令。"""
 
-def translate(text: str, target_language: str) -> str:
-    # text = "Could you tell me where the station is?"
-    # text = "阿里巴巴"
-    # target_language = "en"
-
-    # start = time.time()
-    # # SMaLL-100 places the target-language token at the beginning of the source.
-    # source_tokens = (
-    #         [f"__{target_language}__"]
-    #         + tokenizer.encode(text, out_type=str)
-    #         + ["</s>"]
-    # )
-    #
-    # result = translator.translate_batch(
-    #     [source_tokens],
-    #     beam_size=5,
-    #     max_decoding_length=256,
-    #     length_penalty=1.2,
-    #     coverage_penalty=0.1,
-    #     return_end_token=True,
-    # )
-    # translation = tokenizer.decode(result[0].hypotheses[0])
-    # print(translation)
-    # print(time.time() - start)
-    # return translation
-
-    start = time.time()
-    texts = "And um, and NVIDIA's market cap was eight billion dollars when Stripe launched in twenty eleven."
-    language = detect(texts)
-    confidence = detect_langs(texts)
-
-    print(texts)
-    print(f"Language: {language}")
-    print(f"Scores: {confidence}")
-    # print(f"Backend: {model.backend}")
-
-    translation = TRANSLATE_MODEL.translate_text(
-        # text="学英语，很多人叫我做翻译，我没时间。我可以把它介绍给我的老师和同事去做。而当时的想法，我觉得应该会挣钱。",
-        text=text,
-        src_lang=language,
-        tgt_lang=target_language,
-    )
-    print(translation)
-    print(time.time() - start)
-    return translation
-
-# =============== Translate ==================
-
-
-def load_model(name: str) -> transcribe_cpp.Model:
-    """從專案現有的 GGUF 檔案載入模型，由套件選擇運算裝置。"""
-    devices = transcribe_cpp.backends()
-    str_tmp = "Intel"
-    # str_tmp = "NVIDIA"
-    # 印出可用裝置
-    for device in devices:
-        print(
-            f"後端={device.kind}, "
-            f"名稱={device.name}, "
-            f"描述={device.description}"
+    def __init__(self, name, open_model, *model_args):
+        context = multiprocessing.get_context("spawn")
+        self._lock = Lock()
+        self._connection, child = context.Pipe()  # context.Pipe()是建立父程序和子程序的的溝通管道，self._connection為父程序從送資料的變數，child是子程序從送資料的變數
+        self._process = context.Process(
+            target=run_model_process, args=(child, open_model, model_args), name=name
         )
+        try:
+            self._process.start()
+        except Exception as error:
+            self._connection.close()
+            self._process.close()
+            raise ModelWorkerError(f"{name} 無法啟動：{error}") from error
+        finally:
+            child.close()
+
+        # 等待就緒，避免切換至一個載入失敗的模型。
+        try:
+            self._receive()
+        except (EOFError, OSError, ModelWorkerError) as error:
+            self.close()
+            raise ModelWorkerError(f"{name} 模型載入失敗：{error}") from error
+
+    def is_alive(self) -> bool:
+        """判斷是否還能使用目前的子程序。"""
+        process = self._process
+        return process is not None and process.is_alive()
+
+    def _receive(self):
+        """等待單一回覆，模型卡住時讓呼叫端能結束子程序。"""
+        if not self._connection.poll(120):
+            raise TimeoutError("等待模型子程序回覆逾時")
+        success, result = self._connection.recv()
+        if not success:
+            raise ModelWorkerError(result)
+        return result
+
+    def call(self, command: str, *args):
+        """每個模型一次處理一個請求，保持指令與回覆成對。"""
+        with self._lock:
+            if not self.is_alive():
+                raise ModelWorkerError("模型子程序已停止")
+            try:
+                self._connection.send((command, args))
+                return self._receive()
+            except (EOFError, OSError) as error:
+                self._close()
+                raise ModelWorkerError(f"模型子程序通訊失敗：{error}") from error
+
+    def close(self) -> None:
+        """關閉通道，等待子程序釋放模型後退出。"""
+        with self._lock:
+            self._close()
+
+    def _close(self) -> None:
+        """持有鎖時執行關閉；逾時才終止子程序。"""
+        process = self._process
+        if process is None:
+            return
+        self._connection.close()
+        process.join(timeout=5)
+        if process.is_alive():
+            process.terminate()
+            process.join()
+        process.close()
+        self._process = None
+
+
+@contextmanager
+def asr_commands(name: str):
+    """僅在 ASR 子程序載入 transcribe.cpp、選定的 ASR 模型及 Silero VAD。"""
+    import numpy as np
+    import transcribe_cpp
+
+    devices = transcribe_cpp.backends()
     selected_device = next(
         (
             device
             for device in devices
             if device.kind == "vulkan"
-               and str_tmp.casefold()
-               in f"{device.name} {device.description}".casefold()
+            and "intel" in f"{device.name} {device.description}".casefold()
         ),
         None,
     )
-    print(selected_device)
-    return transcribe_cpp.Model(MODEL_DIR / f"{name}.gguf", backend="vulkan", device=selected_device)
+    with ExitStack() as models, ExitStack() as recording:
+        asr_model = models.enter_context(transcribe_cpp.Model(
+            MODEL_DIR / f"{name}.gguf", backend="vulkan", device=selected_device,
+        ))
+        vad_model = models.enter_context(transcribe_cpp.Model(
+            MODEL_DIR / "silero-vad-v6.2-F32.gguf", backend="cpu",
+        ))
+        session = vad = None
+
+        def start():
+            """每次錄音建立新的 ASR 與 VAD session，避免帶入上一場錄音的狀態。"""
+            nonlocal session, vad
+            recording.close()
+            with ExitStack() as sessions:
+                session = sessions.enter_context(asr_model.session())
+                vad = sessions.enter_context(vad_model.vad_session(n_threads=1))
+                recording.enter_context(sessions.pop_all())
+
+        def score(frame: bytes) -> float | None:
+            """將一包 PCM 交給子程序中的 VAD session，回傳語音機率。"""
+            samples = np.frombuffer(frame, dtype="<i2").astype(np.float32) / 32768.0
+            probabilities = vad.stream_feed(samples).probs
+            return probabilities[0] if probabilities else None
+
+        def recognize(pcm: bytes) -> str:
+            """將 PCM 轉成 float32，再透過子程序中的 ASR session 取得文字。"""
+            samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+            if not samples.any():
+                return ""
+            return session.run(samples).text.strip()
+
+        yield {"start": start, "stop": recording.close, "score": score, "recognize": recognize}
+
+
+@contextmanager
+def translation_commands():
+    """僅在翻譯子程序載入 CrispASR 和 MADLAD 模型。"""
+    from crispasr import Session
+    from langdetect import DetectorFactory, LangDetectException, detect
+
+    DetectorFactory.seed = 0
+    with Session(
+        model_path=str(MODEL_DIR / "madlad400-3b-mt-q4_k.gguf"),
+        backend="madlad",
+        n_threads=4,
+    ) as model:
+        def translate(text: str, target: str) -> str:
+            """根據實際轉錄文字判斷來源語言，並在同一個 session 翻譯。"""
+            try:
+                source = detect(text)
+            except LangDetectException:
+                source = "en"  # 純數字等無法判定語言的文字沿用原本的英文預設。
+            return model.translate_text(text=text, src_lang=source, tgt_lang=target).strip()
+
+        yield {"translate": translate}
 
 
 class ModelState:
     """持有目前的模型，並在切換模型與開始錄音之間互斥。"""
 
-    def __init__(self, model: transcribe_cpp.Model):
+    def __init__(self, model: ModelProcess):
         self.name = MODEL_NAMES[0]
         self.model = model
         self.lock = asyncio.Lock()
@@ -153,9 +221,9 @@ class ModelState:
 
     async def select(self, name: str) -> None:
         """先成功載入新模型，才更新狀態並釋放舊模型。"""
-        if name == self.name:
+        if name == self.name and self.model.is_alive():
             return
-        replacement = await run_in_threadpool(load_model, name)
+        replacement = await run_in_threadpool(ModelProcess, "SpeechTrack-ASR", asr_commands, name)
         previous = self.model
         self.model, self.name = replacement, name
         await run_in_threadpool(previous.close)
@@ -170,15 +238,13 @@ class ModelState:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """啟動時載入預設模型，關閉服務時釋放模型。"""
-    state = ModelState(await run_in_threadpool(load_model, MODEL_NAMES[0]))
+    """分別啟動轉錄和翻譯程序，服務關閉時等兩者釋放模型。"""
+    asr = await run_in_threadpool(ModelProcess, "SpeechTrack-ASR", asr_commands, MODEL_NAMES[0])
+    state = ModelState(asr)
     app.state.asr = state
     try:
-        # 沿用專案範例，以 CPU 載入共用的 Silero VAD 模型。
-        vad_model = await run_in_threadpool(
-            transcribe_cpp.Model, MODEL_DIR / "silero-vad-v6.2-F32.gguf", backend="cpu"
-        )
-        app.state.vad_model = vad_model
+        translation_model = await run_in_threadpool(ModelProcess, "SpeechTrack-MT", translation_commands)
+        app.state.translation_model = translation_model
         try:
             # 轉錄後可用 HTTP 請求呼叫同一個 FastAPI 的翻譯路由。
             transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
@@ -186,9 +252,9 @@ async def lifespan(app: FastAPI):
                 app.state.translation_client = client
                 yield
         finally:
-            await run_in_threadpool(vad_model.close)
+            await run_in_threadpool(translation_model.close)
     finally:
-        # 即使 VAD 載入失敗，也要釋放已載入的 ASR 模型。
+        # 即使翻譯模型載入失敗，也要關閉已啟動的 ASR 子程序。
         await run_in_threadpool(state.model.close)
 
 
@@ -203,24 +269,32 @@ class TranslationRequest(BaseModel):
 
 
 @app.post("/test/translate")
-async def translate_text(request: TranslationRequest) -> dict[str, str]:
-    """以共用的 SMaLL-100 模型翻譯文字。"""
-    text = request.text.strip()
+async def translate_text(payload: TranslationRequest, request: Request) -> dict[str, str]:
+    """將文字送給載入 MADLAD 的翻譯子程序。"""
+    text = payload.text.strip()
     if not text:
         raise HTTPException(status_code=422, detail="請提供要翻譯的文字。")
-    if request.target not in TRANSLATION_TARGETS:
+    if payload.target not in TRANSLATION_TARGETS:
         raise HTTPException(status_code=422, detail="不支援這個翻譯語言。")
-    translation = await run_in_threadpool(translate, text, request.target)
-    return {"translation": translation.strip()}
+    try:
+        translation = await run_in_threadpool(
+            request.app.state.translation_model.call, "translate", text, payload.target
+        )
+    except ModelWorkerError as error:
+        logger.exception("翻譯子程序執行失敗")
+        raise HTTPException(status_code=503, detail="翻譯失敗。") from error
+    return {"translation": translation}
 
 
-def recognize(session: transcribe_cpp.Session, pcm: bytes) -> str:
-    """將 PCM16LE 轉為 float32，並取得轉錄原文。"""
-    print("PCM DATA length: ", len(pcm))
-    samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
-    if not samples.any():
-        return ""  # 略過全零音訊，避免對靜音產生文字。
-    return session.run(samples).text.strip()
+@asynccontextmanager
+async def asr_recording(model: ModelProcess):
+    """錄音開始和結束時，由 ASR 子程序管理原生 session。"""
+    await run_in_threadpool(model.call, "start")
+    try:
+        yield
+    finally:
+        if model.is_alive():
+            await run_in_threadpool(model.call, "stop")
 
 
 async def send_translation(
@@ -244,20 +318,19 @@ async def send_translation(
 
 async def send_transcripts(
     websocket: WebSocket,
-    model: transcribe_cpp.Model,
+    model: ModelProcess,
     frames: asyncio.Queue[bytes | str | None],
     target: str,
 ) -> None:
     """收集目前的音訊段落，反覆辨識以更新暫定文字。"""
     pcm = bytearray()
     last_size = 0
-    vad_model = websocket.app.state.vad_model
     silence_chunk = 0
     # 同一段原文更新或切換語言時提升版本，讓譯文能對應到正確的清單列。
     last_text = ""
     segment_id = 1
     revision = 0
-    with model.session() as session, vad_model.vad_session(n_threads=1) as vad:
+    async with asr_recording(model):
         while True:
             frame = await frames.get()
 
@@ -266,17 +339,11 @@ async def send_transcripts(
             # 推論期間仍能接收音訊。一次取出已排隊的封包，略過過時的暫定結果。
 
             while isinstance(frame, bytes) and frame:
-                # ================ VAD ==========================
-                chunk = np.frombuffer(frame, dtype=np.int16).astype(np.float32) / 32768.0
-                result = await run_in_threadpool(vad.stream_feed, chunk)
-                # 每包 32 ms 音訊對應一個語音機率，先印出來觀察。
-                if result.probs:
-                    print(f"語音機率 {result.probs[0]:.2f}")
-                if result.probs[0] < 0.9:
-                    silence_chunk += 1
-                else:
-                    silence_chunk = 0
-                # ================ VAD ==========================
+                # 每包 32 ms 音訊由 ASR 子程序內的 VAD 判定語音機率。
+                probability = await run_in_threadpool(model.call, "score", frame)
+                if probability is not None:
+                    print(f"語音機率 {probability:.2f}")
+                    silence_chunk = silence_chunk + 1 if probability < 0.9 else 0
 
                 pcm.extend(frame)
                 print("[DBG] PCM length: ", len(pcm))
@@ -294,7 +361,7 @@ async def send_transcripts(
                 target = frame
             stopping = frame is None
             # final = stopping or len(pcm) == SEGMENT_BYTES
-            final = stopping or silence_chunk >= SILENCE_CHUNK #or len(pcm) >= SEGMENT_BYTES
+            final = stopping or silence_chunk >= SILENCE_CHUNK or len(pcm) >= SEGMENT_BYTES
             new_audio_bytes = len(pcm) - last_size
             refresh_translation = target_changed and bool(last_text)
             if pcm and (final or new_audio_bytes >= UPDATE_BYTES or refresh_translation):
@@ -302,7 +369,7 @@ async def send_transcripts(
                 if new_audio_bytes > 0 and (
                     new_audio_bytes >= UPDATE_BYTES or (final and len(pcm) > SILENCE_BYTES)
                 ):
-                    last_text = await run_in_threadpool(recognize, session, bytes(pcm))
+                    last_text = await run_in_threadpool(model.call, "recognize", bytes(pcm))
                     last_size = len(pcm)
 
                 # 先讓前端顯示原文，翻譯 API 回應後再送出譯文。
@@ -332,7 +399,6 @@ async def audio_transcribe(websocket: WebSocket):
     """同一條連線接收 JSON 操作指令與原始 PCM 封包。"""
     await websocket.accept()
     state: ModelState = websocket.app.state.asr
-    state_vad: ModelState = websocket.app.state.vad_model
     # 佇列可放 PCM、語言代碼或停止訊號，保留一個位置給停止訊號。
     frames: asyncio.Queue[bytes | str | None] = asyncio.Queue(maxsize=2049)
     worker: asyncio.Task | None = None
@@ -407,7 +473,7 @@ async def audio_transcribe(websocket: WebSocket):
                             raise ValueError("請先停止錄音再切換模型。")
                         try:
                             await state.select(name)
-                        except transcribe_cpp.TranscribeError:
+                        except ModelWorkerError:
                             # 載入失敗時保留原模型，讓使用者可以繼續操作。
                             logger.exception("無法載入選擇的模型")
                             raise ValueError("模型載入失敗。") from None
@@ -417,6 +483,8 @@ async def audio_transcribe(websocket: WebSocket):
                             raise ValueError("目前已有錄音正在進行。")
                         if control.get("model") != state.name:
                             raise ValueError("模型已切換，請確認選單後再開始。")
+                        # 上一場若因子程序意外退出而中止，開始新錄音時重新載入。
+                        await state.select(state.name)
                         recording_target = target
                         state.recording = True
                         worker = asyncio.create_task(
@@ -433,7 +501,7 @@ async def audio_transcribe(websocket: WebSocket):
                 await websocket.send_json(reply)
     except WebSocketDisconnect:
         pass
-    except transcribe_cpp.TranscribeError:
+    except ModelWorkerError:
         logger.exception("音訊辨識失敗")
         await websocket.send_json({"type": "error", "message": "音訊辨識失敗。"})
         await websocket.close(code=1011)
