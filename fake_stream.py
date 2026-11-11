@@ -14,6 +14,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 import httpx
 from pydantic import BaseModel
+import soundfile as sf
+import numpy as np
 
 
 # WebSocket 每則二進位訊息固定為 32 ms 的 16 kHz 單聲道 PCM16LE。
@@ -137,6 +139,8 @@ class ModelProcess:
         self._process = None
 
 
+
+
 @contextmanager
 def asr_commands(name: str):
     """僅在 ASR 子程序載入 transcribe.cpp、選定的 ASR 模型及 Silero VAD。"""
@@ -184,7 +188,46 @@ def asr_commands(name: str):
                 return ""
             return session.run(samples).text.strip()
 
-        yield {"start": start, "stop": recording.close, "score": score, "recognize": recognize}
+        def recognize_file(file_path: str) -> list:
+
+            def load_audio(audio_path: str) -> np.ndarray:
+                """讀取音訊，確認為 16 kHz，並轉成單聲道 float32。"""
+                audio, sample_rate = sf.read(
+                    audio_path,
+                    dtype="float32",
+                    always_2d=True,
+                )
+
+                if sample_rate != 16_000:
+                    raise ValueError("音訊必須先重新取樣為 16 kHz。")
+
+                mono_audio = audio.mean(axis=1)
+                return np.ascontiguousarray(mono_audio, dtype=np.float32)
+
+            audio = load_audio(file_path)
+            result = vad.run(
+                audio,
+                threshold=0.5,
+                min_speech_ms=250,
+                min_silence_ms=500,
+                speech_pad_ms=30,
+                max_speech_ms=0
+            )
+            result_json = []
+            for segment in result.segments:
+                start = segment.start_sample / SAMPLE_RATE
+                end = segment.end_sample / SAMPLE_RATE
+                speech_pcm = audio[segment.start_sample:segment.end_sample]
+                print(f"語音 {start:.3f}～{end:.3f} 秒，{len(speech_pcm)} samples")
+                text = session.run(speech_pcm).text.strip()
+                print(text)
+                result_json.append({"start": round(start, 3), "end": round(end, 3), "text": text})
+            return result_json
+
+
+
+
+        yield {"start": start, "stop": recording.close, "score": score, "recognize": recognize, "recognize_file": recognize_file}
 
 
 @contextmanager
@@ -513,6 +556,32 @@ async def audio_transcribe(websocket: WebSocket):
             frames.put_nowait(b"")
             await asyncio.gather(worker, return_exceptions=True)
             state.recording = False
+
+
+
+class FileTranscribeRequest(BaseModel):
+    """翻譯端點接收轉錄原文和目標語言代碼。"""
+    job_id: str
+    file_path: str
+
+
+@app.post("/test/file_transcribe")
+async def file_transcribe(payload: FileTranscribeRequest, request: Request):
+    """將文字送給載入 MADLAD 的翻譯子程序。"""
+    file_path = payload.file_path.strip()
+    if not file_path:
+        raise HTTPException(status_code=422, detail="請提供要翻譯的文字。")
+    try:
+        print("request.app.state.asr.model: ", request.app.state.asr.model)
+        async with asr_recording(request.app.state.asr.model):
+            result_json = await run_in_threadpool(
+                request.app.state.asr.model.call, "recognize_file", file_path
+            )
+        return {"type": "Result", "job_id": payload.job_id, "transcription": result_json}
+    except ModelWorkerError as error:
+        logger.exception("翻譯子程序執行失敗")
+        raise HTTPException(status_code=503, detail="翻譯失敗。") from error
+
 
 
 # 放在 API 路由之後，讓既有的 WebSocket 路徑優先處理。
