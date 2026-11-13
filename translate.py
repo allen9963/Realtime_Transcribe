@@ -50,6 +50,9 @@
 # # # )
 # #
 # # 建立 OmniASR Session
+# texts = "And um, and NVIDIA's market cap was eight billion dollars when Stripe launched in twenty eleven."
+# # texts = "This year is twenty eleven."
+# # texts = "Today is March twenty six, twenty twenty one."
 # with Session(
 #         model_path="models\\m2m100-418m-q4_k.gguf",
 #         backend="m2m100",
@@ -59,9 +62,12 @@
 #     print(f"Backend: {model.backend}")
 #     start = time.time()
 #     segments = model.translate_text(
-#         text="学英语，很多人叫我做翻译，我没时间。我可以把它介绍给我的老师和同事去做。而当时的想法，我觉得应该会挣钱。",
-#         src_lang="zh",
-#         tgt_lang="en",
+#         # text="学英语，很多人叫我做翻译，我没时间。我可以把它介绍给我的老师和同事去做。而当时的想法，我觉得应该会挣钱。",
+#         # src_lang="zh",
+#         # tgt_lang="en",
+#         text=texts,
+#         src_lang="en",
+#         tgt_lang="zh",
 #     )
 #     print(segments)
 #     print(time.time() - start)
@@ -93,6 +99,11 @@
 # # target_language = "en"
 #
 # text = "And um, and NVIDIA's market cap was eight billion dollars when Stripe launched in twenty eleven."
+# # target_language = "zh"
+#
+# # text = "in twenty eleven."
+# # text = "That was a very big move for them, and when we went to the US as a family, I think the the key part that my parents always instilled upon me is."
+# # text = "Nine billion."
 # target_language = "zh"
 #
 # start = time.time()
@@ -146,6 +157,7 @@ from langdetect import detect, detect_langs, DetectorFactory
 DetectorFactory.seed = 0
 from crispasr import Session
 import time
+# from words2num2 import words2num, alpha2digits
 
 # MODEL_PATH = "models/omniasr-ctc-300m-v2.gguf"
 # AUDIO_PATH = "audio\\recording-16k.wav"
@@ -158,14 +170,20 @@ import time
 #
 # 建立 OmniASR Session
 with Session(
-        model_path="models\\madlad400-3b-mt-q4_k.gguf",
-        backend="madlad",
-        n_threads=4,
+    model_path="models\\madlad400-3b-mt-q4_k.gguf",
+    backend="madlad",
+    n_threads=4,
 ) as model:
     start = time.time()
-    texts = "And um, and NVIDIA's market cap was eight billion dollars when Stripe launched in twenty eleven."
+    # texts = "And um, and NVIDIA's market cap was nine billion dollars when Stripe launched in twenty eleven."
+    # texts = "This year is twenty eleven."
+    texts = "That was a very big move for them, and when we went to the US as a family, I think the the key part that my parents always instilled upon me is."
+    # texts = "one billion"
     language = detect(texts)
     confidence = detect_langs(texts)
+    # print(language)
+    # print(alpha2digits(texts, lang=language))
+    # texts = alpha2digits(texts, lang=language)
 
     print(texts)
     print(f"Language: {language}")
