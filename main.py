@@ -9,9 +9,10 @@ import time
 # MODEL_PATH = "models/nemotron-3.5-asr-streaming-0.6b-F16.gguf"
 # MODEL_PATH = "models/whisper-large-v3-turbo-Q8_0.gguf"
 # MODEL_PATH = "models/whisper-large-v3-turbo-Q4_K_M.gguf"
-MODEL_PATH = "models/whisper-small-F16.gguf"
+# MODEL_PATH = "models/whisper-small-F16.gguf"
 # MODEL_PATH = "models/Qwen3-ASR-0.6B-Q8_0.gguf"
 # MODEL_PATH = "models/whisper-small-Q4_K_M.gguf"
+MODEL_PATH = "models/Qwen3-ASR-0.6B-Q4_K_M.gguf"
 print("CUDA 是否可用：", transcribe_cpp.backend_available("cuda"))
 devices = transcribe_cpp.backends()
 str_tmp = "Intel"

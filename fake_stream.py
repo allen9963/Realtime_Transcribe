@@ -30,7 +30,7 @@ SILENCE_BYTES = SILENCE_CHUNK * FRAME_BYTES
 
 PROJECT_DIR = Path(__file__).resolve().parent
 MODEL_DIR = PROJECT_DIR / "models"
-MODEL_NAMES = ("whisper-small-F16", "Qwen3-ASR-0.6B-Q8_0", "whisper-large-v3-turbo-Q4_K_M", "whisper-large-v3-turbo-Q8_0", "whisper-small-Q4_K_M")
+MODEL_NAMES = ("whisper-small-F16", "Qwen3-ASR-0.6B-Q8_0", "whisper-large-v3-turbo-Q4_K_M", "whisper-large-v3-turbo-Q8_0", "whisper-small-Q4_K_M", "Qwen3-ASR-0.6B-Q4_K_M")
 # 所有轉錄模型共用 MADLAD 的目標語言清單。
 TRANSLATION_TARGETS = ("en", "ja", "ko", "zh", "de", "fr", "es")
 LANGUAGE_RELATION = {
@@ -260,76 +260,78 @@ def translation_commands():
     #         return model.translate_text(text=text, src_lang=source, tgt_lang=target).strip()
     #
     #     yield {"translate": translate}
-    # from llama_cpp import Llama
-    #
-    # llm = Llama(
-    #     # model_path="models/Qwen3.5-2B-Q4_K_M.gguf",
-    #     # model_path="models/Qwen3-0.6B-Q8_0.gguf",
-    #     model_path="models/Index-Translate-2B.Q8_0.gguf",
-    #
-    #     verbose=False,
-    #     enable_thinking=False
-    # )
-    #
-    # def translate(text: str, target: str) -> str:
-    #     # user_input = f"Please translate the following text into {LANGUAGE_RELATION[target]} and output the translation directly without any explanation. \n\n{text}"
-    #     user_input = f"Please translate the following text into {LANGUAGE_RELATION[target]} and output the translation directly without any explanation. \n\n{text} /no_think"
-    #     print(user_input)
-    #     # print(instruction)
-    #     print("target: ", target)
-    #     print("LANGUAGE_RELATION: ", LANGUAGE_RELATION[target])
-    #     result = llm.create_chat_completion(
-    #         messages=[
-    #             # {"role": "system", "content": instruction},
-    #             {
-    #                 "role": "user",
-    #                 "content": user_input
-    #             }
-    #         ],
-    #         temperature=0.0,
-    #     )
-    #     print(result)
-    #     print(result['choices'][0]['message']['content'])
-    #     return result['choices'][0]['message']['content'].strip()
+    from llama_cpp import Llama
 
-    from pathlib import Path
+    llm = Llama(
+        # model_path="models/Qwen3.5-2B-Q4_K_M.gguf",
+        # model_path="models/Qwen3-0.6B-Q8_0.gguf",
+        # model_path="models/Index-Translate-2B.Q8_0.gguf",
+        model_path="models/Hy-MT2-1.8B-Q4_K_M.gguf",
 
-    import ctranslate2
-    import sentencepiece as spm
-    import time
-
-    model_dir = Path("models/small100-ctranslate2-int8")
-
-    translator = ctranslate2.Translator(
-        str(model_dir),
-        device="cpu",
-        compute_type="int8_float32",
-        inter_threads=1,
-        intra_threads=4,
-    )
-    tokenizer = spm.SentencePieceProcessor(
-        model_file=str(model_dir / "sentencepiece.bpe.model")
+        verbose=False,
+        enable_thinking=False
     )
 
     def translate(text: str, target: str) -> str:
-        source_tokens = (
-                [f"__{target}__"]
-                + tokenizer.encode(text, out_type=str)
-                + ["</s>"]
+        # user_input = f"Please translate the following text into {LANGUAGE_RELATION[target]} and output the translation directly without any explanation. \n\n{text}"
+        # user_input = f"Please translate the following text into {LANGUAGE_RELATION[target]} and output the translation directly without any explanation. \n\n{text} /no_think"
+        user_input = f"Translate the following segment into {LANGUAGE_RELATION[target]}, without additional explanation：{text}"
+        print(user_input)
+        # print(instruction)
+        print("target: ", target)
+        print("LANGUAGE_RELATION: ", LANGUAGE_RELATION[target])
+        result = llm.create_chat_completion(
+            messages=[
+                # {"role": "system", "content": instruction},
+                {
+                    "role": "user",
+                    "content": user_input
+                }
+            ],
+            temperature=0.0,
         )
-        print(source_tokens)
-        result = translator.translate_batch(
-            [source_tokens],
-            beam_size=5,
-            max_decoding_length=512,
-            length_penalty=1.2,
-            coverage_penalty=0.1,
-            return_end_token=True,
-        )
-        translation = tokenizer.decode(result[0].hypotheses[0])
-        print(translation)
-        # print(time.time() - start)
-        return translation
+        print(result)
+        print(result['choices'][0]['message']['content'])
+        return result['choices'][0]['message']['content'].strip()
+
+    # from pathlib import Path
+    #
+    # import ctranslate2
+    # import sentencepiece as spm
+    # import time
+    #
+    # model_dir = Path("models/small100-ctranslate2-int8")
+    #
+    # translator = ctranslate2.Translator(
+    #     str(model_dir),
+    #     device="cpu",
+    #     compute_type="int8_float32",
+    #     inter_threads=1,
+    #     intra_threads=4,
+    # )
+    # tokenizer = spm.SentencePieceProcessor(
+    #     model_file=str(model_dir / "sentencepiece.bpe.model")
+    # )
+    #
+    # def translate(text: str, target: str) -> str:
+    #     source_tokens = (
+    #             [f"__{target}__"]
+    #             + tokenizer.encode(text, out_type=str)
+    #             + ["</s>"]
+    #     )
+    #     print(source_tokens)
+    #     result = translator.translate_batch(
+    #         [source_tokens],
+    #         beam_size=5,
+    #         max_decoding_length=512,
+    #         length_penalty=1.2,
+    #         coverage_penalty=0.1,
+    #         return_end_token=True,
+    #     )
+    #     translation = tokenizer.decode(result[0].hypotheses[0])
+    #     print(translation)
+    #     # print(time.time() - start)
+    #     return translation
 
     yield {"translate": translate}
 

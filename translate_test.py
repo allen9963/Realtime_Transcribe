@@ -13,8 +13,10 @@ llm = Llama(
     # model_path="models/madlad400-3b-mt-q4_k.gguf",
     # chat_format="llama-2"
     # chat_format="gemma",
-    model_path="models/gemma-4-E2B-it.Q8_0-pleQ4_K.gguf",
+    # model_path="models/gemma-4-E2B-it.Q8_0-pleQ4_K.gguf",
     # model_path="models/plamo-3-translate-0.8b-Q4_K_M.gguf",
+    model_path="models/Hy-MT2-1.8B-Q4_K_M.gguf",
+    # model_path="models/Hy-MT2-1.8B-1.25Bit.gguf",
     verbose=True,
     enable_thinking=False
 )
@@ -43,7 +45,8 @@ trg_lang = "Chinese"
 #
 # user_input = f"Please translate the following text into {trg_lang} and output the translation directly without any explanation. \n\n{text}  \n/no_think"
 
-user_input = f"Please translate the following text into {trg_lang} and output the translation directly without any explanation. \n\n{text}"
+# user_input = f"Please translate the following text into {trg_lang} and output the translation directly without any explanation. \n\n{text}"
+user_input = f"Translate the following segment into {trg_lang}, without additional explanation：{text}"
 # print(instruction)
 result = llm.create_chat_completion(
     messages = [
