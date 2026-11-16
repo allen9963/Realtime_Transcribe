@@ -38,6 +38,13 @@
       <select id="target" disabled><option value="">不翻譯</option></select>
       <p id="translation-hint"></p>
     </section>
+    <!-- 依接收順序保留本頁的 WebSocket 回應，方便捲動查看和複製。 -->
+    <section class="response-panel" aria-labelledby="response-heading">
+      <h2 id="response-heading">後端回應紀錄</h2>
+      <div id="response-log" role="region" aria-labelledby="response-heading" tabindex="0">
+        <p id="response-empty">等待後端回應…</p>
+      </div>
+    </section>
   </main>
 </body>
 </html>

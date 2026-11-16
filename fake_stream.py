@@ -386,12 +386,20 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="SpeechTrack 即時轉錄 Demo", lifespan=lifespan)
 
+class Health(BaseModel):
+    server_status: str
+
+@app.get("/test/server_ready", response_model=Health)
+def health(request: Request):
+    if request.app.state.translation_model.is_alive() and request.app.state.asr.model is not None:
+        return {"server_status": "ready"}
+
 
 class TranslationRequest(BaseModel):
     """翻譯端點接收轉錄原文和目標語言代碼。"""
 
     text: str
-    target: str
+    target_lang: str
 
 
 @app.post("/test/translate")
@@ -400,11 +408,11 @@ async def translate_text(payload: TranslationRequest, request: Request) -> dict[
     text = payload.text.strip()
     if not text:
         raise HTTPException(status_code=422, detail="請提供要翻譯的文字。")
-    if payload.target not in TRANSLATION_TARGETS:
+    if payload.target_lang not in TRANSLATION_TARGETS:
         raise HTTPException(status_code=422, detail="不支援這個翻譯語言。")
     try:
         translation = await run_in_threadpool(
-            request.app.state.translation_model.call, "translate", text, payload.target
+            request.app.state.translation_model.call, "translate", text, payload.target_lang
         )
     except ModelWorkerError as error:
         logger.exception("翻譯子程序執行失敗")
@@ -424,15 +432,15 @@ async def asr_recording(model: ModelProcess):
 
 
 async def send_translation(
-    websocket: WebSocket, segment_id: int, revision: int, text: str, target: str
+    websocket: WebSocket, final: str, segment_id: int, revision: int, text: str, target: str
 ) -> None:
     """呼叫翻譯 API，並把結果送回原文對應的清單列。"""
     client: httpx.AsyncClient = websocket.app.state.translation_client
     message = {
-        "type": "translation", "segment_id": segment_id, "revision": revision, "target": target,
+        "type": "translation", "final": final, "segment_id": segment_id, "revision": revision, "target": target,
     }
     try:
-        response = await client.post("/test/translate", json={"text": text, "target": target})
+        response = await client.post("/test/translate", json={"text": text, "target_lang": target})
         response.raise_for_status()
         message["translation"] = response.json()["translation"]
     except (httpx.HTTPError, ValueError, KeyError):
@@ -506,7 +514,7 @@ async def send_transcripts(
                     "segment_id": segment_id, "revision": revision,
                 })
                 if last_text and target:
-                    await send_translation(websocket, segment_id, revision, last_text, target)
+                    await send_translation(websocket, final, segment_id, revision, last_text, target)
 
                 if final:
                     pcm.clear()

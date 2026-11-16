@@ -8,6 +8,9 @@ const transcriptList = document.querySelector("#transcript-list");
 const transcriptEmpty = document.querySelector("#transcript-empty");
 const transcriptTemplate = document.querySelector("#transcript-row");
 const translationHint = document.querySelector("#translation-hint");
+// 紀錄區保留頁面收到的所有回應，包含轉錄、翻譯和控制訊息。
+const responseLog = document.querySelector("#response-log");
+const responseEmpty = document.querySelector("#response-empty");
 // 以中文顯示後端回傳的語言，選單的值仍使用語言代碼。
 const translationLabels = {
   en: "英文",
@@ -174,7 +177,23 @@ function showTranslation(message) {
 }
 
 socket.addEventListener("message", ({data}) => {
-  const message = JSON.parse(data);
+  // 以純文字保留原始回應，停在底部時才跟隨新訊息。
+  const followResponse = responseLog.scrollHeight - responseLog.scrollTop
+    - responseLog.clientHeight < 32;
+  const response = document.createElement("pre");
+  response.textContent = data;
+  responseEmpty.hidden = false;
+  responseLog.append(response);
+  if (followResponse) responseLog.scrollTop = responseLog.scrollHeight;
+
+  // 非 JSON 回應也可以在紀錄區查看。
+  let message;
+  try {
+    message = JSON.parse(data);
+  } catch {
+    return;
+  }
+  if (!message) return;
   switch (message.type) {
     case "ready":
     case "model":
