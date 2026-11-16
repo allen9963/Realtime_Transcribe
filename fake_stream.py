@@ -389,7 +389,7 @@ app = FastAPI(title="SpeechTrack 即時轉錄 Demo", lifespan=lifespan)
 class Health(BaseModel):
     server_status: str
 
-@app.get("/test/server_ready", response_model=Health)
+@app.get("/v1/server_ready", response_model=Health)
 def health(request: Request):
     if request.app.state.translation_model.is_alive() and request.app.state.asr.model is not None:
         return {"server_status": "ready"}
@@ -402,7 +402,7 @@ class TranslationRequest(BaseModel):
     target_lang: str
 
 
-@app.post("/test/translate")
+@app.post("/v1/translate")
 async def translate_text(payload: TranslationRequest, request: Request) -> dict[str, str]:
     """將文字送給載入 MADLAD 的翻譯子程序。"""
     text = payload.text.strip()
@@ -440,7 +440,7 @@ async def send_translation(
         "type": "translation", "final": final, "segment_id": segment_id, "revision": revision, "target": target,
     }
     try:
-        response = await client.post("/test/translate", json={"text": text, "target_lang": target})
+        response = await client.post("/v1/translate", json={"text": text, "target_lang": target})
         response.raise_for_status()
         message["translation"] = response.json()["translation"]
     except (httpx.HTTPError, ValueError, KeyError):
@@ -528,7 +528,7 @@ async def send_transcripts(
                 return
 
 
-@app.websocket("/test/audio_transcribe")
+@app.websocket("/v1/audio_transcribe")
 async def audio_transcribe(websocket: WebSocket):
     """同一條連線接收 JSON 操作指令與原始 PCM 封包。"""
     await websocket.accept()
@@ -656,7 +656,7 @@ class FileTranscribeRequest(BaseModel):
     file_path: str
 
 
-@app.post("/test/file_transcribe")
+@app.post("/v1/file_transcribe")
 async def file_transcribe(payload: FileTranscribeRequest, request: Request):
     """將文字送給載入 MADLAD 的翻譯子程序。"""
     file_path = payload.file_path.strip()

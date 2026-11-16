@@ -22,7 +22,7 @@ const translationLabels = {
   es: "西班牙文",
 };
 
-const socketUrl = new URL("/test/audio_transcribe", location.href);
+const socketUrl = new URL("/v1/audio_transcribe", location.href);
 socketUrl.protocol = location.protocol === "https:" ? "wss:" : "ws:";
 const socket = new WebSocket(socketUrl);
 // WebSocket 連線就緒時取得後端的模型名稱與 PCM 規格。

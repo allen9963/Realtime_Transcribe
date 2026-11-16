@@ -150,86 +150,87 @@
 # # # => "Life is like a box of chocolate."
 #
 #
-# import numpy as np
+import numpy as np
 # # import soundfile as sf
-# from langdetect import detect, detect_langs, DetectorFactory
+from langdetect import detect, detect_langs, DetectorFactory
 #
 # DetectorFactory.seed = 0
-# from crispasr import Session
-# import time
-# # from words2num2 import words2num, alpha2digits
-#
-# # MODEL_PATH = "models/omniasr-ctc-300m-v2.gguf"
-# # AUDIO_PATH = "audio\\recording-16k.wav"
-#
-# # # 讀取音訊
-# # # audio, sample_rate = sf.read(
-# # #     AUDIO_PATH,
-# # #     dtype="float32"
-# # # )
-# #
-# # 建立 OmniASR Session
-# with Session(
-#     model_path="models\\madlad400-3b-mt-q4_k.gguf",
-#     backend="madlad",
-#     n_threads=4,
-# ) as model:
-#     start = time.time()
-#     # texts = "And um, and NVIDIA's market cap was nine billion dollars when Stripe launched in twenty eleven."
-#     # texts = "This year is twenty eleven."
-#     texts = "That was a very big move for them, and when we went to the US as a family, I think the the key part that my parents always instilled upon me is."
-#     # texts = "one billion"
-#     language = detect(texts)
-#     confidence = detect_langs(texts)
-#     # print(language)
-#     # print(alpha2digits(texts, lang=language))
-#     # texts = alpha2digits(texts, lang=language)
-#
-#     print(texts)
-#     print(f"Language: {language}")
-#     print(f"Scores: {confidence}")
-#     print(f"Backend: {model.backend}")
-#
-#     segments = model.translate_text(
-#         # text="学英语，很多人叫我做翻译，我没时间。我可以把它介绍给我的老师和同事去做。而当时的想法，我觉得应该会挣钱。",
-#         text=texts,
-#         src_lang=language,
-#         tgt_lang="zh",
-#     )
-#     print(segments)
-#     print(time.time() - start)
-
 from crispasr import Session
 import time
-import numpy as np
-import soundfile as sf
+# from words2num2 import words2num, alpha2digits
 
-def load_audio(audio_path: str) -> np.ndarray:
-    """讀取音訊，確認為 16 kHz，並轉成單聲道 float32。"""
-    audio, sample_rate = sf.read(
-        audio_path,
-        dtype="float32",
-        always_2d=True,
-    )
+# MODEL_PATH = "models/omniasr-ctc-300m-v2.gguf"
+# AUDIO_PATH = "audio\\recording-16k.wav"
 
-    if sample_rate != 16_000:
-        raise ValueError("音訊必須先重新取樣為 16 kHz。")
-
-    mono_audio = audio.mean(axis=1)
-    return np.ascontiguousarray(mono_audio, dtype=np.float32)
-
-s = Session("models/vibevoice-asr-q4_k.gguf")
-audio = load_audio("audio\\20260408140049_20m_3.wav")
-chunk_ms = 1000 # ms
-chunk = max(1, int(16000 * chunk_ms / 1000))
-
-for i in range(0, len(audio), chunk):
+# # 讀取音訊
+# # audio, sample_rate = sf.read(
+# #     AUDIO_PATH,
+# #     dtype="float32"
+# # )
+#
+# 建立 OmniASR Session
+with Session(
+    model_path="models\\madlad400-3b-mt-q4_k.gguf",
+    backend="madlad",
+    n_threads=4,
+) as model:
     start = time.time()
-    text = s.transcribe(audio[0 : i+chunk], sample_rate=16000)
+    # texts = "And um, and NVIDIA's market cap was nine billion dollars when Stripe launched in twenty eleven."
+    # texts = "This year is twenty eleven."
+    # texts = "That was a very big move for them, and when we went to the US as a family, I think the the key part that my parents always instilled upon me is."
+    texts = "And um, and NVIDIA's market cap was eight billion dollars when Stripe launched in twenty eleven."
+    # texts = "one billion"
+    language = detect(texts)
+    confidence = detect_langs(texts)
+    # print(language)
+    # print(alpha2digits(texts, lang=language))
+    # texts = alpha2digits(texts, lang=language)
 
-    print(f"[0~{len(audio[0 : i+chunk]) / 16000}]:")
-    for seg in text:
-        print(seg.text)
+    print(texts)
+    print(f"Language: {language}")
+    print(f"Scores: {confidence}")
+    print(f"Backend: {model.backend}")
+
+    segments = model.translate_text(
+        # text="学英语，很多人叫我做翻译，我没时间。我可以把它介绍给我的老师和同事去做。而当时的想法，我觉得应该会挣钱。",
+        text=texts,
+        src_lang=language,
+        tgt_lang="zh",
+    )
+    print(segments)
     print(time.time() - start)
-# for seg in s.transcribe(pcm_f32, sample_rate=16000):
-#     print(seg.text)
+
+# from crispasr import Session
+# import time
+# import numpy as np
+# import soundfile as sf
+#
+# def load_audio(audio_path: str) -> np.ndarray:
+#     """讀取音訊，確認為 16 kHz，並轉成單聲道 float32。"""
+#     audio, sample_rate = sf.read(
+#         audio_path,
+#         dtype="float32",
+#         always_2d=True,
+#     )
+#
+#     if sample_rate != 16_000:
+#         raise ValueError("音訊必須先重新取樣為 16 kHz。")
+#
+#     mono_audio = audio.mean(axis=1)
+#     return np.ascontiguousarray(mono_audio, dtype=np.float32)
+#
+# s = Session("models/vibevoice-asr-q4_k.gguf")
+# audio = load_audio("audio\\20260408140049_20m_3.wav")
+# chunk_ms = 1000 # ms
+# chunk = max(1, int(16000 * chunk_ms / 1000))
+#
+# for i in range(0, len(audio), chunk):
+#     start = time.time()
+#     text = s.transcribe(audio[0 : i+chunk], sample_rate=16000)
+#
+#     print(f"[0~{len(audio[0 : i+chunk]) / 16000}]:")
+#     for seg in text:
+#         print(seg.text)
+#     print(time.time() - start)
+# # for seg in s.transcribe(pcm_f32, sample_rate=16000):
+# #     print(seg.text)
