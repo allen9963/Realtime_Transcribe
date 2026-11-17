@@ -3,3 +3,4 @@ audio/
 models/
 *.venv
 __pycache__
+*.patch

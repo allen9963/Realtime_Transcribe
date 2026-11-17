@@ -5,6 +5,8 @@ body { margin: 0 auto; max-width: 1220px; padding: 36px 20px;
 h1 { text-align: center; }
 main { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(0, 2fr)
        minmax(180px, 1fr); gap: 16px; align-items: start; }
+/* 模型區塊隱藏後，讓錄音和翻譯設定並排。 */
+main.speechtrack-layout { grid-template-columns: minmax(0, 2fr) minmax(180px, 1fr); }
 section { padding: 20px; background: white; border: 1px solid #d9e1ea; border-radius: 12px; }
 h2 { font-size: 18px; margin-top: 0; }
 select, button { font: inherit; padding: 8px; }
@@ -33,4 +35,6 @@ button:disabled { opacity: .6; cursor: default; }
 #response-log pre { margin: 0; padding: 10px 16px; font: .875rem/1.5 ui-monospace, monospace;
                     white-space: pre-wrap; overflow-wrap: anywhere; }
 #response-log pre + pre { border-top: 1px solid #d9e1ea; }
-@media (max-width: 790px) { main { grid-template-columns: 1fr; } }
+@media (max-width: 790px) {
+  main, main.speechtrack-layout { grid-template-columns: 1fr; }
+}
