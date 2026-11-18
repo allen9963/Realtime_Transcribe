@@ -1,0 +1,10 @@
+--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+llama-cpp-python
+fastapi
+httpx
+pydantic
+opencc
+numpy
+soundfile
+transcribe-cpp
+uvicorn

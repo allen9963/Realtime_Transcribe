@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SpeechTrack 即時轉錄</title>
+  <!-- 瀏覽器分別載入網頁樣式和操作程式。 -->
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <h1>SpeechTrack 即時轉錄</h1>
+  <main>
+    <section>
+      <h2><label for="model">轉錄模型</label></h2>
+      <select id="model" disabled></select>
+    </section>
+    <section>
+      <button id="record" disabled>開始錄音</button>
+      <p id="status" role="status">正在連線…</p>
+      <h2 id="transcript-heading">轉錄文字</h2>
+      <!-- 每列保留同一段的原文和譯文，清單尾端可有一筆暫定結果。 -->
+      <div id="transcript-feed" class="transcript-feed" role="region"
+           aria-labelledby="transcript-heading" tabindex="0">
+        <p id="transcript-empty">開始錄音後，轉錄結果會顯示在這裡。</p>
+        <ol id="transcript-list" role="list"></ol>
+      </div>
+      <template id="transcript-row">
+        <li class="transcript-row">
+          <span class="transcript-draft">Partial（暫定）</span>
+          <p class="transcript-text"></p>
+          <p class="transcript-translation" hidden></p>
+        </li>
+      </template>
+    </section>
+    <section>
+      <h2><label for="target">翻譯語言</label></h2>
+      <select id="target" disabled><option value="">不翻譯</option></select>
+      <p id="translation-hint"></p>
+    </section>
+    <!-- 依接收順序保留本頁的 WebSocket 回應，方便捲動查看和複製。 -->
+    <section class="response-panel" aria-labelledby="response-heading">
+      <h2 id="response-heading">後端回應紀錄</h2>
+      <div id="response-log" role="region" aria-labelledby="response-heading" tabindex="0">
+        <p id="response-empty">等待後端回應…</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

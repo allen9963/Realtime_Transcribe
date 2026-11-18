@@ -1,0 +1,40 @@
+/* 寬螢幕採三欄排列，窄螢幕改為單欄。 */
+* { box-sizing: border-box; }
+body { margin: 0 auto; max-width: 1220px; padding: 36px 20px;
+       font: 16px system-ui, sans-serif; color: #182234; background: #f3f6fa; }
+h1 { text-align: center; }
+main { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(0, 2fr)
+       minmax(180px, 1fr); gap: 16px; align-items: start; }
+/* 模型區塊隱藏後，讓錄音和翻譯設定並排。 */
+main.speechtrack-layout { grid-template-columns: minmax(0, 2fr) minmax(180px, 1fr); }
+section { padding: 20px; background: white; border: 1px solid #d9e1ea; border-radius: 12px; }
+h2 { font-size: 18px; margin-top: 0; }
+select, button { font: inherit; padding: 8px; }
+select { width: 100%; }
+button { display: block; margin: auto; padding: 10px 22px; border: 0;
+         border-radius: 8px; background: #1553a6; color: white; cursor: pointer; }
+button:disabled { opacity: .6; cursor: default; }
+#status { text-align: center; min-height: 24px; color: #475569; }
+/* 清單以細線分隔，原文與譯文在同一列內上下排列。 */
+.transcript-feed { min-height: 140px; max-height: 55vh; overflow-y: auto;
+                   border: 1px solid #d9e1ea; border-radius: 8px; }
+#transcript-empty { margin: 0; padding: 16px; color: #475569; }
+#transcript-list { margin: 0; padding: 0; list-style: none; }
+.transcript-row { padding: 12px 16px; line-height: 1.5; }
+.transcript-row + .transcript-row { border-top: 1px solid #d9e1ea; }
+.transcript-row.is-partial { background: #f0f6ff; }
+.transcript-draft { font-size: .8rem; color: #1553a6; }
+.transcript-text, .transcript-translation { margin: 0; white-space: pre-wrap;
+                                            overflow-wrap: anywhere; }
+.transcript-translation { margin-top: 4px; font-size: .9rem; color: #475569; }
+/* 回應紀錄橫跨整列，長內容在框內換行與捲動。 */
+.response-panel { grid-column: 1 / -1; min-width: 0; }
+#response-log { min-height: 100px; max-height: 300px; overflow-y: auto;
+                border: 1px solid #d9e1ea; border-radius: 8px; background: #f8fafc; }
+#response-empty { margin: 0; padding: 12px 16px; color: #475569; }
+#response-log pre { margin: 0; padding: 10px 16px; font: .875rem/1.5 ui-monospace, monospace;
+                    white-space: pre-wrap; overflow-wrap: anywhere; }
+#response-log pre + pre { border-top: 1px solid #d9e1ea; }
+@media (max-width: 790px) {
+  main, main.speechtrack-layout { grid-template-columns: 1fr; }
+}
