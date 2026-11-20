@@ -4,3 +4,6 @@ models/
 *.venv
 __pycache__
 *.patch
+*.spec
+build/
+dist/

@@ -16,6 +16,7 @@ llm = Llama(
     # model_path="models/gemma-4-E2B-it.Q8_0-pleQ4_K.gguf",
     # model_path="models/plamo-3-translate-0.8b-Q4_K_M.gguf",
     model_path="models/Hy-MT2-1.8B-Q4_K_M.gguf",
+    # model_path="models/Hy-MT2-1.8B-Q6_K.gguf",
     # model_path="models/Hy-MT2-1.8B-1.25Bit.gguf",
     verbose=True,
     enable_thinking=False
@@ -46,7 +47,8 @@ trg_lang = "Chinese"
 # user_input = f"Please translate the following text into {trg_lang} and output the translation directly without any explanation. \n\n{text}  \n/no_think"
 
 # user_input = f"Please translate the following text into {trg_lang} and output the translation directly without any explanation. \n\n{text}"
-user_input = f"Translate the following segment into {trg_lang}, without additional explanation：{text}"
+# user_input = f"Translate the following segment into {trg_lang}, without additional explanation：{text}"
+user_input = f"Translate the following text into {trg_lang}. Note that you should only output the translated result without any additional explanation:\n\n{text}"
 # user_input = f"Translate the following text into {trg_lang}. Note that you should only output the translated result without any additional explanation:{text}"
 # user_input = f"<2{trg_lang}> {text}"
 # print(instruction)

@@ -1,0 +1,41 @@
+python -m PyInstaller -D -n SpeechTrack --clean --noconfirm --collect-all opencc --hidden-import=opencc.clib.opencc_clib --collect-all transcribe_cpp_native --copy-metadata transcribe-cpp-native --copy-metadata transcribe-cpp --hidden-import=llama_cpp --add-binary "${llamaLib}\*.dll;llama_cpp\lib" --hidden-import=model_worker --noupx SpeechTrack.py          
+
+
+
+
+# 取得實際套件位置
+$llamaLib = (& python -c "from pathlib import Path; import importlib.util; s = importlib.util.find_spec('llama_cpp'); print(Path(s.origin).parent / 'lib')").Trim()
+
+# 檢查來源是否正確
+if (-not (Test-Path -LiteralPath (Join-Path $llamaLib "llama.dll"))) {
+    throw "找不到 llama.dll，請檢查來源：$llamaLib"
+}
+
+# 基本打包參數
+$pyiArgs = @(
+    "-D",
+    "-n", "SpeechTrack_test",
+    "--clean",
+    "--noconfirm",
+    "--collect-all", "opencc",
+    "--hidden-import=opencc.clib.opencc_clib",
+    "--collect-all", "transcribe_cpp_native",
+    "--copy-metadata", "transcribe-cpp-native",
+    "--copy-metadata", "transcribe-cpp",
+    "--hidden-import=model_worker",
+    "--noupx"
+)
+
+# 只收集 llama_cpp/lib 下的 DLL
+Get-ChildItem -LiteralPath $llamaLib -File -Filter "*.dll" |
+    ForEach-Object {
+        $pyiArgs += @(
+            "--add-binary",
+            "$($_.FullName);llama_cpp/lib"
+        )
+    }
+
+$pyiArgs += "SpeechTrack_test1.py"
+
+# 開始打包
+python -m PyInstaller @pyiArgs

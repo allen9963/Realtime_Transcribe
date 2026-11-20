@@ -18,7 +18,19 @@ from fastapi.staticfiles import StaticFiles
 import httpx
 from pydantic import BaseModel
 import opencc
+import dotenv
+import os
 
+dotenv.load_dotenv()
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "warning").upper(),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    # filename="app.log",  # 取消註解即可改為寫入檔案
+    # encoding="utf-8",    # 避免中文亂碼
+)
 
 converter = opencc.OpenCC('s2t.json')
 
@@ -48,18 +60,47 @@ MODEL_NAMES = (
     DEFAULT_ASR_MODEL,
 )
 # 翻譯選單的語言代碼對應到 Hy-MT2 提示詞中的語言名稱。
-TRANSLATION_TARGETS = ("en", "ja", "ko", "zh-Hant", "zh-Hans", "de", "fr", "es")
 LANGUAGE_RELATION = {
+    "zh-Hans": "Chinese",
     "en": "English",
-    "ja": "Japanese",
-    "ko": "Korean",
-    "zh-Hant" : "Chinese",
-    "zh-Hans" : "Chinese",
-    "de": "German",
     "fr": "French",
+    "pt": "Portuguese",
     "es": "Spanish",
+    "ja": "Japanese",
+    "tr": "Turkish",
+    "ru": "Russian",
+    "ar": "Arabic",
+    "ko": "Korean",
+    "th": "Thai",
+    "it": "Italian",
+    "de": "German",
+    "vi": "Vietnamese",
+    "ms": "Malay",
+    "id": "Indonesian",
+    "tl": "Filipino",
+    "hi": "Hindi",
+    "zh-Hant": "Traditional Chinese",
+    "pl": "Polish",
+    "cs": "Czech",
+    "nl": "Dutch",
+    "km": "Khmer",
+    "my": "Burmese",
+    "fa": "Persian",
+    "gu": "Gujarati",
+    "ur": "Urdu",
+    "te": "Telugu",
+    "mr": "Marathi",
+    "he": "Hebrew",
+    "bn": "Bengali",
+    "ta": "Tamil",
+    "uk": "Ukrainian",
+    "bo": "Tibetan",
+    "kk": "Kazakh",
+    "mn": "Mongolian",
+    "ug": "Uyghur",
+    "yue": "Cantonese",
 }
-logger = logging.getLogger("uvicorn.error")
+TRANSLATION_TARGETS = tuple(LANGUAGE_RELATION.keys())
 
 
 class ModelWorkerError(RuntimeError):
@@ -83,6 +124,7 @@ def run_model_process(connection, open_model, model_args):
             while True:
                 command, args = connection.recv()
                 # print("[DBF] command: ", command)
+                logger.debug(f"[DBG] command: {command}")
                 try:
                     result = commands[command](*args)
                 except Exception as error:
@@ -182,7 +224,8 @@ def asr_commands(name: str):
         None,
     )
     with ExitStack() as models, ExitStack() as recording:
-        print("Model_name: ", name)
+        # print("Model_name: ", name)
+        logger.debug(f"[DBG] Model_name: {name}")
         asr_model = models.enter_context(transcribe_cpp.Model(
             MODEL_DIR / f"{name}.gguf", backend="vulkan", device=selected_device,
         ))
@@ -235,9 +278,11 @@ def asr_commands(name: str):
                 start = segment.start_sample / SAMPLE_RATE
                 end = segment.end_sample / SAMPLE_RATE
                 speech_pcm = audio[segment.start_sample:segment.end_sample]
-                print(f"語音 {start:.3f}～{end:.3f} 秒，{len(speech_pcm)} samples")
+                # print(f"語音 {start:.3f}～{end:.3f} 秒，{len(speech_pcm)} samples")
+                logger.debug(f"[DBG] 語音 {start:.3f}～{end:.3f} 秒，{len(speech_pcm)} samples")
                 text = session.run(speech_pcm).text.strip()
-                print(text)
+                # print(text)
+                logger.debug(f"[DBG] 轉錄文字: {text}")
                 segments.append({"start": round(start, 3), "end": round(end, 3), "text": text})
             return segments
 
@@ -264,17 +309,21 @@ def translation_commands():
     def translate(text: str, target: str) -> str:
         """用指定的語言翻譯原文，回傳模型產生的文字。"""
         language = LANGUAGE_RELATION[target]
-        prompt = f"Translate the following segment into {language}, without additional explanation：{text}"
-        print(prompt)
-        print("target: ", target)
-        print("LANGUAGE_RELATION: ", language)
+        # prompt = f"Translate the following segment into {language}, without additional explanation：{text}"
+        prompt = f"Translate the following text into {language}. Note that you should only output the translated result without any additional explanation:\n\n{text}"
+        # print(prompt)
+        # print("target: ", target)
+        logger.debug(f"[DBG] target Language: {target}")
+        # print("LANGUAGE_RELATION: ", language)
+        logger.debug(f"[DBG] LANGUAGE_RELATION: {language}")
         result = model.create_chat_completion(
             messages=[{"role": "user", "content": prompt}],
             temperature=0.0,
         )
         translation = result["choices"][0]["message"]["content"]
-        print(result)
-        print(translation)
+        # print(result)
+        # print(translation)
+        logger.debug(f"[DBG] translation result: {translation}")
         return translation.strip()
 
     try:
@@ -314,8 +363,9 @@ async def lifespan(app: FastAPI):
     app.state.asr = state
     # 空字串代表不翻譯，翻譯模型在第一筆翻譯時才載入。
     app.state.translate_target_language = ""
-    app.state.translation_model = None
+    app.state.translation_model = await run_in_threadpool(ModelProcess, "SpeechTrack-MT", translation_commands)
     app.state.translation_lock = asyncio.Lock()
+
     try:
         # 即時轉錄的譯文走同一個 FastAPI 服務的翻譯端點。
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
@@ -398,11 +448,11 @@ async def translate_text(payload: TranslationRequest, request: Request) -> dict[
         # 多筆翻譯同時到達時，只啟動一個翻譯子程序。
         async with state.translation_lock:
             model = state.translation_model
-            if model is None:
-                model = await run_in_threadpool(
-                    ModelProcess, "SpeechTrack-MT", translation_commands
-                )
-                state.translation_model = model
+            # if model is None:
+            #     model = await run_in_threadpool(
+            #         ModelProcess, "SpeechTrack-MT", translation_commands
+            #     )
+            #     state.translation_model = model
         translation = await run_in_threadpool(model.call, "translate", text, payload.target_lang)
     except ModelWorkerError as error:
         logger.exception("翻譯子程序執行失敗")
